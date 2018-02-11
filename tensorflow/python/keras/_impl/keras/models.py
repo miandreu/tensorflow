@@ -492,13 +492,13 @@ class Sequential(Model):
         # to the input layer we just created.
         layer(x)
 
-      if len(layer.inbound_nodes[-1].output_tensors) != 1:
+      if len(layer._inbound_nodes[-1].output_tensors) != 1:
         raise ValueError('All layers in a Sequential model '
                          'should have a single output tensor. '
                          'For multi-output layers, '
                          'use the functional API.')
 
-      self.outputs = [layer.inbound_nodes[-1].output_tensors[0]]
+      self.outputs = [layer._inbound_nodes[-1].output_tensors[0]]
       self.inputs = topology.get_source_inputs(self.outputs[0])
 
       # We create an input node, which we will keep updated
@@ -1070,7 +1070,7 @@ class Sequential(Model):
 
   def fit_generator(self,
                     generator,
-                    steps_per_epoch,
+                    steps_per_epoch=None,
                     epochs=1,
                     verbose=1,
                     callbacks=None,
@@ -1101,8 +1101,10 @@ class Sequential(Model):
         steps_per_epoch: Total number of steps (batches of samples)
             to yield from `generator` before declaring one epoch
             finished and starting the next epoch. It should typically
-            be equal to the number of unique samples of your dataset
+            be equal to the number of samples of your dataset
             divided by the batch size.
+            Optional for `Sequence`: if unspecified, will use
+            the `len(generator)` as a number of steps.
         epochs: Integer, total number of iterations on the data.
             Note that in conjunction with initial_epoch, the parameter
             epochs is to be understood as "final epoch". The model is
@@ -1118,8 +1120,10 @@ class Sequential(Model):
             is a generator.
             Number of steps to yield from validation generator
             at the end of every epoch. It should typically
-            be equal to the number of unique samples of your
+            be equal to the number of samples of your
             validation dataset divided by the batch size.
+            Optional for `Sequence`: if unspecified, will use
+            the `len(validation_data)` as a number of steps.
         class_weight: Dictionary mapping class indices to a weight
             for the class.
         max_queue_size: Maximum size for the generator queue
@@ -1195,7 +1199,7 @@ class Sequential(Model):
 
   def evaluate_generator(self,
                          generator,
-                         steps,
+                         steps=None,
                          max_queue_size=10,
                          workers=1,
                          use_multiprocessing=False,
@@ -1210,6 +1214,8 @@ class Sequential(Model):
             or (inputs, targets, sample_weights)
         steps: Total number of steps (batches of samples)
             to yield from `generator` before stopping.
+            Optional for `Sequence`: if unspecified, will use
+            the `len(generator)` as a number of steps.
         max_queue_size: maximum size for the generator queue
         workers: maximum number of processes to spin up
         use_multiprocessing: if True, use process based threading.
@@ -1254,7 +1260,7 @@ class Sequential(Model):
 
   def predict_generator(self,
                         generator,
-                        steps,
+                        steps=None,
                         max_queue_size=10,
                         workers=1,
                         use_multiprocessing=False,
@@ -1269,6 +1275,8 @@ class Sequential(Model):
         generator: generator yielding batches of input samples.
         steps: Total number of steps (batches of samples)
             to yield from `generator` before stopping.
+            Optional for `Sequence`: if unspecified, will use
+            the `len(generator)` as a number of steps.
         max_queue_size: maximum size for the generator queue
         workers: maximum number of processes to spin up
         use_multiprocessing: if True, use process based threading.

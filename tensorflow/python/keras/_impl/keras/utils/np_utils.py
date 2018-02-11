@@ -1,4 +1,4 @@
-# Copyright 2015 The TensorFlow Authors. All Rights Reserved.
+# Copyright 2018 The TensorFlow Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ def to_categorical(y, num_classes=None):
   """
   y = np.array(y, dtype='int')
   input_shape = y.shape
-  if input_shape and input_shape[-1] == 1:
+  if input_shape and input_shape[-1] == 1 and len(input_shape) > 1:
     input_shape = tuple(input_shape[:-1])
   y = y.ravel()
   if not num_classes:

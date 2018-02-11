@@ -452,18 +452,25 @@ class ContextTest(test_util.TensorFlowTestCase):
               c.to_proto(),
               control_flow_ops.CondContext.from_proto(c.to_proto()).to_proto())
 
-  def testWhileContext(self):
+  def _testWhileContextHelper(self, maximum_iterations=None):
     with self.test_session() as sess:
       i = constant_op.constant(0)
       c = lambda i: math_ops.less(i, 10)
       b = lambda i: math_ops.add(i, 1)
-      control_flow_ops.while_loop(c, b, [i])
+      control_flow_ops.while_loop(
+          c, b, [i], maximum_iterations=maximum_iterations)
       for op in sess.graph.get_operations():
-        c = op._get_control_flow_context()
-        if c:
-          self.assertProtoEquals(
-              c.to_proto(),
-              control_flow_ops.WhileContext.from_proto(c.to_proto()).to_proto())
+        context = op._get_control_flow_context()
+        if context:
+          self.assertProtoEquals(context.to_proto(),
+                                 control_flow_ops.WhileContext.from_proto(
+                                     context.to_proto()).to_proto())
+
+  def testWhileContext(self):
+    self._testWhileContextHelper()
+
+  def testWhileContextWithMaximumIterations(self):
+    self._testWhileContextHelper(maximum_iterations=10)
 
   def testControlContextImportScope(self):
     with self.test_session():
@@ -476,8 +483,8 @@ class ContextTest(test_util.TensorFlowTestCase):
       c._values = ["a", "b"]
       c._external_values = {"a": b1}
 
-      c_with_scope = control_flow_ops.ControlFlowContext._from_proto(
-          c._to_proto(), import_scope="test_scope")
+      c_with_scope = control_flow_ops.ControlFlowContext(
+          values_def=c._to_values_def(), import_scope="test_scope")
 
       # _values and _external_values should be have scope prepended.
       self.assertEquals(
@@ -487,8 +494,8 @@ class ContextTest(test_util.TensorFlowTestCase):
 
       # Calling _to_proto() with export_scope should remove "test_scope".
       self.assertProtoEquals(
-          c._to_proto(),
-          c_with_scope._to_proto(export_scope="test_scope"))
+          c._to_values_def(),
+          c_with_scope._to_values_def(export_scope="test_scope"))
 
 
 def _GetNestedShape(nested):
@@ -876,8 +883,7 @@ class CaseTest(test_util.TensorFlowTestCase):
     with self.test_session() as sess:
       self.assertEqual(sess.run(output, feed_dict={x: 1}), 2)
       self.assertEqual(sess.run(output, feed_dict={x: 3}), 8)
-      with self.assertRaisesRegexp(errors.InvalidArgumentError,
-                                   "More than one condition evaluated as True"):
+      with self.assertRaisesRegexp(errors.InvalidArgumentError, "Input error:"):
         sess.run(output, feed_dict={x: 2})
 
   def testCase_multiple_matches_non_exclusive(self):
@@ -902,11 +908,7 @@ class CaseTest(test_util.TensorFlowTestCase):
       self.assertEqual(sess.run(output, feed_dict={x: 1}), 2)
       self.assertEqual(sess.run(output, feed_dict={x: 2}), 4)
       self.assertEqual(sess.run(output, feed_dict={x: 3}), 6)
-      with self.assertRaisesRegexp(
-          errors.InvalidArgumentError,
-          r"\[None of the conditions evaluated as True. "
-          r"Conditions: \(Equal:0, Equal_1:0, Equal_2:0\), Values:\] "
-          r"\[0 0 0\]"):
+      with self.assertRaisesRegexp(errors.InvalidArgumentError, "Input error:"):
         sess.run(output, feed_dict={x: 4})
 
   def testCase_withoutDefault_oneCondition(self):
@@ -915,10 +917,7 @@ class CaseTest(test_util.TensorFlowTestCase):
     output = control_flow_ops.case(conditions, exclusive=True)
     with self.test_session() as sess:
       self.assertEqual(sess.run(output, feed_dict={x: 1}), 2)
-      with self.assertRaisesRegexp(
-          errors.InvalidArgumentError,
-          r"\[None of the conditions evaluated as True. "
-          r"Conditions: \(Equal:0\), Values:\] \[0\]"):
+      with self.assertRaisesRegexp(errors.InvalidArgumentError, "Input error:"):
         sess.run(output, feed_dict={x: 4})
 
 

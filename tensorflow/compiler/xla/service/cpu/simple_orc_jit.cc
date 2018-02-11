@@ -15,7 +15,6 @@ limitations under the License.
 
 #include "tensorflow/compiler/xla/service/cpu/simple_orc_jit.h"
 
-#include <dlfcn.h>
 #include <stdint.h>
 #include <algorithm>
 #include <list>
@@ -34,10 +33,12 @@ limitations under the License.
 #include "tensorflow/compiler/xla/service/cpu/custom_call_target_registry.h"
 #include "tensorflow/compiler/xla/service/cpu/orc_jit_memory_mapper.h"
 #include "tensorflow/compiler/xla/service/cpu/runtime_conv2d.h"
+#include "tensorflow/compiler/xla/service/cpu/runtime_fft.h"
 #include "tensorflow/compiler/xla/service/cpu/runtime_fork_join.h"
 #include "tensorflow/compiler/xla/service/cpu/runtime_matmul.h"
 #include "tensorflow/compiler/xla/service/cpu/runtime_single_threaded_conv2d.h"
 #include "tensorflow/compiler/xla/service/cpu/runtime_single_threaded_matmul.h"
+#include "tensorflow/compiler/xla/service/cpu/windows_compatibility.h"
 #include "tensorflow/compiler/xla/types.h"
 #include "tensorflow/core/platform/logging.h"
 
@@ -46,7 +47,7 @@ namespace cpu {
 namespace {
 
 // A simple SymbolResolver that delegates to the host dynamic linker.
-class SimpleResolver : public llvm::JITSymbolResolver {
+class SimpleResolver : public llvm::LegacyJITSymbolResolver {
  public:
   explicit SimpleResolver(ExternalConstantPool* external_constant_pool)
       : external_constant_pool_(external_constant_pool) {}
@@ -102,9 +103,21 @@ llvm::StringRef GetHostCpuName() {
 
 CompilerFunctor::VectorIntrinsics GetAvailableIntrinsics() {
   CompilerFunctor::VectorIntrinsics intrinsics;
-  intrinsics.sse_intrinsics = (&__xla_cpu_runtime_ExpV4F32SSE != nullptr);
-  intrinsics.avx_intrinsics = (&__xla_cpu_runtime_ExpV8F32AVX != nullptr);
-  intrinsics.neon_intrinsics = (&__xla_cpu_runtime_ExpV4F32NEON != nullptr);
+#ifdef TF_XLA_HAS_SSE4_1
+  intrinsics.sse_intrinsics = true;
+#else
+  intrinsics.sse_intrinsics = false;
+#endif
+#ifdef TF_XLA_HAS_AVX
+  intrinsics.avx_intrinsics = true;
+#else
+  intrinsics.avx_intrinsics = false;
+#endif
+#ifdef TF_XLA_HAS_NEON
+  intrinsics.neon_intrinsics = true;
+#else
+  intrinsics.neon_intrinsics = false;
+#endif
   return intrinsics;
 }
 
@@ -196,17 +209,21 @@ bool RegisterKnownJITSymbols() {
   REGISTER_CPU_RUNTIME_SYMBOL(AcquireInfeedBufferForDequeue);
   REGISTER_CPU_RUNTIME_SYMBOL(AcquireOutfeedBufferForPopulation);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenConvF32);
+  REGISTER_CPU_RUNTIME_SYMBOL(EigenFft);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenMatMulF32);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenMatMulF64);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedConvF32);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF32);
   REGISTER_CPU_RUNTIME_SYMBOL(EigenSingleThreadedMatMulF64);
-  REGISTER_CPU_RUNTIME_SYMBOL(ExpV4F32NEON);
-  REGISTER_CPU_RUNTIME_SYMBOL(ExpV4F32SSE);
-  REGISTER_CPU_RUNTIME_SYMBOL(ExpV8F32AVX);
+#ifdef TF_XLA_HAS_NEON
   REGISTER_CPU_RUNTIME_SYMBOL(LogV4F32NEON);
+#endif
+#ifdef TF_XLA_HAS_SSE4_1
   REGISTER_CPU_RUNTIME_SYMBOL(LogV4F32SSE);
+#endif
+#ifdef TF_XLA_HAS_AVX
   REGISTER_CPU_RUNTIME_SYMBOL(LogV8F32AVX);
+#endif
   REGISTER_CPU_RUNTIME_SYMBOL(ParallelForkJoin);
   REGISTER_CPU_RUNTIME_SYMBOL(ReleaseInfeedBufferAfterDequeue);
   REGISTER_CPU_RUNTIME_SYMBOL(ReleaseOutfeedBufferAfterPopulation);
@@ -253,15 +270,15 @@ bool RegisterKnownJITSymbols() {
   REGISTER_LIBM_SYMBOL(ilogb, int (*)(double));
   REGISTER_LIBM_SYMBOL(ldexp, double (*)(double, int));
   REGISTER_LIBM_SYMBOL(lgamma, double (*)(double));
-  REGISTER_LIBM_SYMBOL(llrint, long long (*)(double));
-  REGISTER_LIBM_SYMBOL(llround, long long (*)(double));
+  REGISTER_LIBM_SYMBOL(llrint, long long (*)(double));   // NOLINT(runtime/int)
+  REGISTER_LIBM_SYMBOL(llround, long long (*)(double));  // NOLINT(runtime/int)
   REGISTER_LIBM_SYMBOL(log, double (*)(double));
   REGISTER_LIBM_SYMBOL(log10, double (*)(double));
   REGISTER_LIBM_SYMBOL(log1p, double (*)(double));
   REGISTER_LIBM_SYMBOL(log2, double (*)(double));
   REGISTER_LIBM_SYMBOL(logb, double (*)(double));
-  REGISTER_LIBM_SYMBOL(lrint, long (*)(double));
-  REGISTER_LIBM_SYMBOL(lround, long (*)(double));
+  REGISTER_LIBM_SYMBOL(lrint, long (*)(double));   // NOLINT(runtime/int)
+  REGISTER_LIBM_SYMBOL(lround, long (*)(double));  // NOLINT(runtime/int)
   REGISTER_LIBM_SYMBOL(modf, double (*)(double, double*));
   REGISTER_LIBM_SYMBOL(nan, double (*)(const char*));
   REGISTER_LIBM_SYMBOL(nearbyint, double (*)(double));
@@ -272,10 +289,15 @@ bool RegisterKnownJITSymbols() {
   REGISTER_LIBM_SYMBOL(remquo, double (*)(double, double, int*));
   REGISTER_LIBM_SYMBOL(rint, double (*)(double));
   REGISTER_LIBM_SYMBOL(round, double (*)(double));
-  REGISTER_LIBM_SYMBOL(scalbln, double (*)(double, long));
+  REGISTER_LIBM_SYMBOL(scalbln,
+                       double (*)(double, long));  // NOLINT(runtime/int)
   REGISTER_LIBM_SYMBOL(scalbn, double (*)(double, int));
   REGISTER_LIBM_SYMBOL(sin, double (*)(double));
+#ifdef __APPLE__
+  REGISTER_LIBM_SYMBOL(__sincos, void (*)(double, double*, double*));
+#else
   REGISTER_LIBM_SYMBOL(sincos, void (*)(double, double*, double*));
+#endif
   REGISTER_LIBM_SYMBOL(sinh, double (*)(double));
   REGISTER_LIBM_SYMBOL(sqrt, double (*)(double));
   REGISTER_LIBM_SYMBOL(tan, double (*)(double));
